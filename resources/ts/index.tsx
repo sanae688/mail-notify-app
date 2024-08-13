@@ -1,13 +1,11 @@
-import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App';
+import Login from './Login';
 
-const container = document.getElementById('app');
+const container = document.getElementById('login');
 const root = createRoot(container!);
 
 root.render(
-    <div className="text-red">
-        Hello World
-        <App />
+    <div className="Login">
+        <Login />
     </div>
 );
