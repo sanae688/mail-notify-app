@@ -16,18 +16,15 @@ class CreateMApiTokensTable extends Migration
     {
         Schema::create('m_api_tokens', function (Blueprint $table) {
             $table->id()->comment('APIトークンID');
-            $table->foreignId('user_id')->unique()->constrained('m_users')->onDelete('cascade')->comment('ユーザーID'); // m_usersテーブルへの外部キー
-            $table->string('access_token')->unique()->comment('アクセストークン');
-            $table->string('refresh_token')->unique()->comment('リフレッシュトークン');
+            $table->foreignId('user_id')->unique()->constrained('m_user')->onDelete('cascade')->comment('ユーザーID'); // m_userテーブルへの外部キー
+            $table->text('access_token')->comment('アクセストークン');
+            $table->text('refresh_token')->comment('リフレッシュトークン');
             $table->timestamp('expires_at')->comment('トークン有効期限');
             $table->timestamp('created_at')->useCurrent()->comment('作成日時');
             $table->timestamp('updated_at')->useCurrent()->useCurrentOnUpdate()->comment('更新日時');
-            $table->timestamp('deleted_at')->nullable()->comment('削除日時');
-            $table->integer('delete_flg')->default(0)->comment('論理削除フラグ'); // 0: active, 1: deleted
         });
 
         DB::statement("ALTER TABLE m_api_tokens COMMENT = 'APIトークンマスタ'");
-        DB::statement('ALTER TABLE m_api_tokens ADD CONSTRAINT check_delete_flg_tokens CHECK (delete_flg IN (0, 1))');
     }
 
     /**

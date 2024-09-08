@@ -86,22 +86,16 @@
 ### 3.テーブル設計
 
 #### テーブル定義
-**1. `m_users` テーブル（`ユーザーマスタ`テーブル）**
+**1. `m_user` テーブル（`ユーザーマスタ`テーブル）**
 
 **役割**: 通知メールを受け取るユーザー情報を格納します。
 
 ```sql
-CREATE TABLE m_users (
+CREATE TABLE m_user (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT 'ユーザーID',
     smaregi_contract_id VARCHAR(255) UNIQUE NOT NULL COMMENT 'スマレジ契約ID',
-    smaregi_user_id VARCHAR(255) UNIQUE NOT NULL COMMENT 'スマレジユーザーID',
-    smaregi_user_name VARCHAR(255) COMMENT 'スマレジユーザー名',
-    smaregi_user_email VARCHAR(255) COMMENT 'スマレジユーザーメールアドレス',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
-    deleted_at TIMESTAMP COMMENT '削除日時',
-    delete_flg INTEGER NOT NULL DEFAULT 0 COMMENT '論理削除フラグ', -- 0: active, 1: deleted
-    CHECK (delete_flg IN (0, 1))
 ) COMMENT = 'ユーザーマスタ';
 ```
 
@@ -109,13 +103,8 @@ CREATE TABLE m_users (
 |------------------------|-----------------------|----------------|-------|-------|-----------------------------------|
 | ユーザーID             | id                    | BIGINT        | PK    | YES   | AUTO_INCREMENT                   |
 | スマレジ契約ID         | smaregi_contract_id   | VARCHAR(255)   |       | YES   | NULL                              |
-| スマレジユーザーID     | smaregi_user_id       | VARCHAR(255)   |       | YES   | NULL                              |
-| スマレジユーザー名     | smaregi_user_name     | VARCHAR(255)   |       | NO    | NULL                              |
-| スマレジユーザーメールアドレス | smaregi_user_email    | VARCHAR(255)   |       | NO    | NULL                              |
 | 作成日時               | created_at            | TIMESTAMP      |       | NO    | CURRENT_TIMESTAMP                |
 | 更新日時               | updated_at            | TIMESTAMP      |       | NO    | CURRENT_TIMESTAMP ON UPDATE      |
-| 削除日時               | deleted_at            | TIMESTAMP      |       | NO    | NULL                              |
-| 論理削除フラグ         | delete_flg            | INTEGER        |       | YES   | 0                                 |
 
 **2. `m_api_tokens` テーブル（`APIトークンマスタ`テーブル）**
 
@@ -124,16 +113,13 @@ CREATE TABLE m_users (
 ```sql
 CREATE TABLE m_api_tokens (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT 'APIトークンID',
-    user_id BIGINT UNSIGNED UNIQUE COMMENT 'ユーザーID', -- m_usersテーブルへの外部キー（1ユーザーに対して1つのトークンが関連付く仕様）
-    access_token VARCHAR(255) UNIQUE NOT NULL COMMENT 'アクセストークン',
-    refresh_token VARCHAR(255) UNIQUE NOT NULL COMMENT 'リフレッシュトークン',
+    user_id BIGINT UNSIGNED UNIQUE COMMENT 'ユーザーID', -- m_userテーブルへの外部キー（1ユーザーに対して1つのトークンが関連付く仕様）
+    access_token TEXT NOT NULL COMMENT 'アクセストークン',
+    refresh_token TEXT NOT NULL COMMENT 'リフレッシュトークン',
     expires_at TIMESTAMP NOT NULL COMMENT 'トークン有効期限',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
-    deleted_at TIMESTAMP COMMENT '削除日時',
-    delete_flg INTEGER NOT NULL DEFAULT 0 COMMENT '論理削除フラグ', -- 0: active, 1: deleted
-    CHECK (delete_flg IN (0, 1)),
-    FOREIGN KEY (user_id) REFERENCES m_users(id) ON DELETE CASCADE
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時'
+    FOREIGN KEY (user_id) REFERENCES m_user(id) ON DELETE CASCADE
 ) COMMENT = 'APIトークンマスタ';
 ```
 
@@ -141,41 +127,68 @@ CREATE TABLE m_api_tokens (
 |------------------------|-----------------------|----------------|-------|-------|-----------------------------------|
 | APIトークンID          | id                    | BIGINT        | PK    | YES   | AUTO_INCREMENT                   |
 | ユーザーID             | user_id               | BIGINT        | FK    | YES   | NULL                              |
-| アクセストークン       | access_token          | VARCHAR(255)   |       | YES   | NULL                              |
-| リフレッシュトークン   | refresh_token         | VARCHAR(255)   |       | YES   | NULL                              |
+| アクセストークン       | access_token          | TEXT   |       | YES   | NULL                              |
+| リフレッシュトークン   | refresh_token         | TEXT   |       | YES   | NULL                              |
 | トークン有効期限       | expires_at            | TIMESTAMP      |       | YES   | NULL                              |
 | 作成日時               | created_at            | TIMESTAMP      |       | NO    | CURRENT_TIMESTAMP                |
 | 更新日時               | updated_at            | TIMESTAMP      |       | NO    | CURRENT_TIMESTAMP ON UPDATE      |
-| 削除日時               | deleted_at            | TIMESTAMP      |       | NO    | NULL                              |
-| 論理削除フラグ         | delete_flg            | INTEGER        |       | YES   | 0                                 |
+
+※アクセストークンとリフレッシュトークンに関しては、テーブル登録時に暗号化を実施する<br>
+　Laravelの暗号化機能を使用する<br>
+　　→「Crypt::encryptString()」を使ってトークンを暗号化、「Crypt::decryptString()」を使って暗号化されたトークンを複合化<br>
+※アクセストークンの使い回しに関しては、[こちらの記事](https://community.smaregi.dev/discussion/81/%E3%82%A2%E3%82%AF%E3%82%BB%E3%82%B9%E3%83%88%E3%83%BC%E3%82%AF%E3%83%B3%E3%81%AE%E4%BD%BF%E3%81%84%E3%81%BE%E3%82%8F%E3%81%97)を参考に、下記の流れで考えている<br>
+　*************************<br>
+　①アクセストークン取得<br>
+　②期間内であれば、そのままトークンを使用<br>
+　③期間外になればリフレッシュトークンを利用してアクセストークンを再発行し使用<br>
+　　※この際、再発行時に取得したリフレッシュトークン・アクセストークン・トークン有効期限にてDBを更新する<br>
+　　※「リフレッシュトークンの有効期限は発行から30日間」かつ「本アプリの場合、ユーザーが定期的にアプリにログインするのは少ないと思われる」ため、<br>
+　　　バッチ実行などで定期的にトークンの再発行を行う予定<br>
+　*************************<br>
 
 #### ER図
 
 ```mermaid
 erDiagram
-    M_USERS {
+    M_USER {
         BIGINT id PK "ユーザーID"
         VARCHAR smaregi_contract_id "スマレジ契約ID"
-        VARCHAR smaregi_user_id "スマレジユーザーID"
-        VARCHAR smaregi_user_name "スマレジユーザー名"
-        VARCHAR smaregi_user_email "スマレジユーザーメールアドレス"
         TIMESTAMP created_at "作成日時"
         TIMESTAMP updated_at "更新日時"
-        TIMESTAMP deleted_at "削除日時"
-        INTEGER delete_flg "論理削除フラグ"
     }
 
     M_API_TOKENS {
         BIGINT id PK "APIトークンID"
         BIGINT user_id FK "ユーザーID"
-        VARCHAR access_token "アクセストークン"
-        VARCHAR refresh_token "リフレッシュトークン"
+        TEXT access_token "アクセストークン"
+        TEXT refresh_token "リフレッシュトークン"
         TIMESTAMP expires_at "トークン有効期限"
         TIMESTAMP created_at "作成日時"
         TIMESTAMP updated_at "更新日時"
-        TIMESTAMP deleted_at "削除日時"
-        INTEGER delete_flg "論理削除フラグ"
     }
 
-    M_USERS ||--o| M_API_TOKENS : "user_id"
+    M_USER ||--o| M_API_TOKENS : "user_id"
 ```
+
+### 4.外部ツールの使用
+
+#### A5:SQL Mk-2
+
+**1. `.env`の設定変更**<br>
+
+`.env`の`DB_HOST`を `localhost` に変更する<br>
+設定変更後は念のため再起動する<br>
+```bash
+sail down
+sail up -d
+```
+
+**2. 外部ツール（A5:SQL Mk-2）からの接続設定**<br>
+
+A5:SQL Mk-2 などの外部ツールで接続設定を行う<br>
+
+- **ホスト名**: `localhost`
+- **ポート**: `3306`
+- **ユーザー名**: `.env` の`DB_USERNAME`
+- **パスワード**: `.env` の`DB_PASSWORD`
+- **データベース**: `.env` の`DB_DATABASE`

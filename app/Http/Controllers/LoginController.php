@@ -5,7 +5,11 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
 use App\Exceptions\OAuthAuthenticationException;
+use App\Services\MUserService;
+use App\Services\MApiTokenService;
 
 /**
  * ログインコントローラー
@@ -16,6 +20,14 @@ use App\Exceptions\OAuthAuthenticationException;
  */
 class LoginController extends Controller
 {
+    /**
+     * コンストラクタ
+     *
+     * @param MUserService $mUserService ユーザーマスタサービス
+     * @param MApiTokenService $mApiTokenService APIトークンマスタサービス
+     */
+    public function __construct(protected MUserService $mUserService, protected MApiTokenService $mApiTokenService) {}
+
     /**
      * ユーザー認可要求
      *
@@ -64,11 +76,43 @@ class LoginController extends Controller
             $userInfo = $this->requestUserInfo($accessTokenInfo['access_token']);
             throw_if(is_null($userInfo), OAuthAuthenticationException::class, 'ユーザー情報取得エラー');
 
+            // ユーザーマスタ情報取得
+            $mUserInfo = $this->mUserService->findByContractId($userInfo['contract']['id']);
+
+            if (is_null($mUserInfo)) {
+                // 契約IDがユーザー情報に存在しない場合、登録処理
+                // ユーザーマスタ登録
+                $createUser = $this->mUserService->createUser($userInfo['contract']['id']);
+                throw_if(is_null($createUser), OAuthAuthenticationException::class, 'ユーザーマスタ登録エラー');
+                Log::info('ユーザーID： ' . $createUser->id);
+
+                // APIトークンマスタ登録
+                $createApiToken = $this->mApiTokenService->createApiToken($createUser->id, Crypt::encryptString($accessTokenInfo['access_token']), Crypt::encryptString($accessTokenInfo['refresh_token']), $accessTokenInfo['expires_in']);
+                throw_if(is_null($createApiToken), OAuthAuthenticationException::class, 'APIトークンマスタ登録エラー');
+                Log::info('APIトークンID： ' . $createApiToken->id);
+            } else {
+                // 契約IDがユーザー情報に存在する場合、更新処理
+                // APIトークンマスタ情報取得
+                $mApiTokenInfo = $this->mUserService->findMApiTokenByMUser($mUserInfo);
+                throw_if(is_null($mApiTokenInfo), OAuthAuthenticationException::class, 'APIトークンマスタ取得エラー');
+                // APIトークンマスタ更新
+                $updateApiTokenCount = $this->mApiTokenService->updateApiToken($mApiTokenInfo->id, Crypt::encryptString($accessTokenInfo['access_token']), Crypt::encryptString($accessTokenInfo['refresh_token']), $accessTokenInfo['expires_in']);
+                Log::info('APIトークンマスタ更新件数： ' . $updateApiTokenCount);
+                throw_if($updateApiTokenCount = 0, OAuthAuthenticationException::class, 'APIトークンマスタ更新エラー');
+            }
+
             return response()->json([
                 'success' => true,
-                'response_user_info' => $userInfo,
+                'message' => $userInfo
             ]);
         } catch (OAuthAuthenticationException $error) {
+            Log::error('エラーが発生しました: ' . $error->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => $error->getMessage(),
+            ]);
+        } catch (\Exception $error) {
+            Log::error('エラーが発生しました: ' . $error->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => $error->getMessage(),
@@ -80,7 +124,7 @@ class LoginController extends Controller
      * ユーザーアクセストークン取得
      *
      * @param String $authorizationCode 認可コード
-     * @return mixed json | null
+     * @return mixed array | null
      */
     private function requestAccessToken(String $authorizationCode): mixed
     {
@@ -100,7 +144,7 @@ class LoginController extends Controller
      * ユーザー情報取得
      *
      * @param String $accessToken アクセストークン
-     * @return mixed json | null
+     * @return mixed array | null
      */
     private function requestUserInfo(String $accessToken): mixed
     {

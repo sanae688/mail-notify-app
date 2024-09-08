@@ -22,10 +22,7 @@ class NotificationMail extends Mailable
      *
      * @param array $mailText メール内容
      */
-    public function __construct(protected array $mailText)
-    {
-        $this->mailText = $mailText;
-    }
+    public function __construct(protected array $mailText) {}
 
     /**
      * 通知メール構築
