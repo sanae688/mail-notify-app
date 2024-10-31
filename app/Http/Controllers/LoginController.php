@@ -7,9 +7,11 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use App\Exceptions\OAuthAuthenticationException;
 use App\Services\MUserService;
 use App\Services\MApiTokenService;
+use App\Services\PKCEService;
 
 /**
  * ログインコントローラー
@@ -25,8 +27,10 @@ class LoginController extends Controller
      *
      * @param MUserService $mUserService ユーザーマスタサービス
      * @param MApiTokenService $mApiTokenService APIトークンマスタサービス
+     * @param PKCEService $pkceService PKCEサービス
+     *
      */
-    public function __construct(protected MUserService $mUserService, protected MApiTokenService $mApiTokenService) {}
+    public function __construct(protected MUserService $mUserService, protected MApiTokenService $mApiTokenService, protected PKCEService $pkceService) {}
 
     /**
      * ユーザー認可要求
@@ -36,10 +40,15 @@ class LoginController extends Controller
     public function requestUserAuthorization(): JsonResponse
     {
         try {
+            // codeVerifier生成
+            $codeVerifier = $this->pkceService->generateCodeVerifier();
+            Storage::put('code_verifiers/save.txt', $codeVerifier);
+
             // ユーザー認可の要求URL生成
             $authorizationCode = 'https://id.smaregi.dev/authorize?response_type=code&client_id=' . env('SMAREGI_CLIENT_ID') .
                 '&scope=openid+email+profile+offline_access&state=' . rand() .
-                '&redirect_uri=' . env('APP_URL') . env('SMAREGI_API_URL') . env('SMAREGI_REDIRECT_URL');
+                '&redirect_uri=' . env('APP_URL') . env('SMAREGI_API_URL') . env('SMAREGI_REDIRECT_URL') .
+                '&code_challenge=' . $this->pkceService->generateCodeChallenge($codeVerifier) . '&code_challenge_method=S256';
 
             return response()->json([
                 'success' => true,
@@ -69,7 +78,9 @@ class LoginController extends Controller
             $authorizationCode = $request->input('code');
 
             // ユーザーアクセストークン取得
-            $accessTokenInfo = $this->requestAccessToken($authorizationCode);
+            $codeVerifier = Storage::get('code_verifiers/save.txt');
+            Storage::delete('code_verifiers/save.txt');
+            $accessTokenInfo = $this->requestAccessToken($codeVerifier, $authorizationCode);
             throw_if(is_null($accessTokenInfo), OAuthAuthenticationException::class, 'ユーザーアクセストークン取得エラー');
 
             // ユーザー情報取得
@@ -123,10 +134,11 @@ class LoginController extends Controller
     /**
      * ユーザーアクセストークン取得
      *
+     * @param String $codeVerifier codeVerifier
      * @param String $authorizationCode 認可コード
      * @return mixed array | null
      */
-    private function requestAccessToken(String $authorizationCode): mixed
+    private function requestAccessToken(string $codeVerifier, String $authorizationCode): mixed
     {
         $responseAccessToken = Http::withHeaders([
             'Authorization' => 'Basic {' . base64_encode(env('SMAREGI_CLIENT_ID') . ':' . env('SMAREGI_CLIENT_SECRET')) . '}',
@@ -135,6 +147,7 @@ class LoginController extends Controller
             'grant_type' => 'authorization_code',
             'code' => $authorizationCode,
             'redirect_uri' => env('APP_URL') . env('SMAREGI_API_URL') . env('SMAREGI_REDIRECT_URL'),
+            'code_verifier' => $codeVerifier,
         ]);
 
         return json_decode($responseAccessToken->getBody()->getContents(), true);
